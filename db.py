@@ -1,0 +1,193 @@
+from db_api import *
+import json
+import datetime
+import operator
+
+
+ops = {
+    '<': operator.lt,
+    '<=': operator.le,
+    '==': operator.eq,
+    '!=': operator.ne,
+    '>=': operator.ge,
+    '>': operator.gt
+}
+
+
+class DBTable(DBTable):
+
+    def __init__(self, name: str, fields: List[DBField], key_field_name: str):
+        super().__init__(name, fields, key_field_name)
+        self.data_path = f"./{DB_ROOT}/{name}.json"
+        my_path = Path(self.data_path)
+        if not my_path.is_file():
+            dic_ = {}
+            for field in fields:
+                dic_[field.name] = str(field.type).split(" ")[1][:-2][1:]
+            meta_data = {"meta_data": {"name": name, "fields": dic_, "key": key_field_name}}
+            self.dump_data(meta_data)
+
+    def load_data(self) -> Dict:
+        table_file = open(self.data_path)
+        return json.load(table_file)
+
+    def dump_data(self, data_to_damp) -> None:
+        with open(self.data_path, "w") as table_file:
+            json.dump(data_to_damp, table_file, default=str)
+
+    def count(self) -> int:
+        data_table = self.load_data()
+        return len(data_table.keys()) - 1
+
+    def is_exist(self, key, list_of_keys):
+        if key in list_of_keys:
+            raise ValueError
+
+    def check_must_fields(self, fields_to_join_by: List) -> bool:
+        fields_names = [field.name for field in self.fields]
+        for field in fields_to_join_by:
+            if field not in fields_names:
+                return False
+        return True
+
+    def insert_record(self, values: Dict[str, Any]) -> None:
+        if self.key_field_name not in values.keys():
+            raise ValueError
+        if not self.check_must_fields(list(values.keys())):
+            raise ValueError
+
+        data_table = self.load_data()
+        self.is_exist(str(values[self.key_field_name]), data_table.keys())
+        data_table[values[self.key_field_name]] = values
+        self.dump_data(data_table)
+
+    def is_meets_the_criterion(self, record: List, criteria: List[SelectionCriteria]) -> bool:
+
+        for command in criteria:
+            operation = ops.get(command.operator)
+            if not operation(str(record[1][command.field_name]), str(command.value)):
+                return False
+        return True
+
+    def delete_record(self, key: Any) -> None:
+        data_table = self.load_data()
+        del data_table[str(key)]
+        self.dump_data(data_table)
+
+    def get_record(self, key: Any) -> Dict[str, Any]:
+        data_table = self.load_data()
+        return data_table[str(key)]
+
+    def delete_records(self, criteria: List[SelectionCriteria]) -> None:
+        data_table = self.load_data()
+        records_to_dalete = self.query_table(criteria)
+        for record in records_to_dalete:
+            del data_table[record["key"]]
+        self.dump_data(data_table)
+
+    def update_record(self, key: Any, values: Dict[str, Any]) -> None:
+        data_table = self.load_data()
+        if str(key) not in data_table.keys():
+            raise KeyError
+        else:
+            data_table[str(key)] = values
+            self.dump_data(data_table)
+
+    def create_index(self, field_to_index: str) -> None:
+        index = {}
+        table_data = self.load_data()
+        for record in table_data:
+            print(record)
+            if not record == "meta_data":
+                record_data_in_the_field = table_data[record][field_to_index]
+                if record_data_in_the_field not in index:
+                    index.update({table_data[record][field_to_index]: [record]})
+                else:
+                    index[record_data_in_the_field].append(record)
+        with open(f"./{DB_ROOT}/{self.name}_index.json","w") as index_file:
+            json.dump(index, index_file)
+
+    def query_table(self, criteria: List[SelectionCriteria]) -> List[Dict[str, Any]]:
+        data_table = self.load_data()
+        list_of_values = []
+        for record in data_table:
+            if record != "meta_data":
+                if self.is_meets_the_criterion([record, data_table[record]], criteria):
+                    data_table[record]["key"] = record
+                    list_of_values.append(data_table[record])
+        return list_of_values
+
+    # def query_table(self, criteria: List[SelectionCriteria]) -> List[Dict[str, Any]]:
+    #     table_data = self.load_data()
+    #     records_meets_the_criteria = []
+    #     for criteria_ in criteria:
+    #         if self.is_file_exist(f"./{DB_ROOT}/{criteria_}_index.json"):מה זה
+
+
+class DataBase(DataBase):
+
+    def __init__(self):
+        self.database_path = f"./{DB_ROOT}/my_database.json"
+
+    def create_table(self, table_name: str, fields: List[DBField], key_field_name: str) -> DBTable:
+        fields_names = [field.name for field in fields]
+        if key_field_name not in fields_names:
+            raise ValueError
+        new_table = DBTable(table_name, fields, key_field_name)
+        check_file = Path(self.database_path)
+        if not check_file.is_file():
+            self.dump_data({new_table.name: new_table.data_path})
+        else:
+            database_data = self.load_data()
+            database_data[new_table.name] = new_table.data_path
+            self.dump_data(database_data)
+        return new_table
+
+    def load_data(self) -> Dict:
+        database_file = open(self.database_path)
+        return json.load(database_file)
+
+    def dump_data(self, data_to_dump: Dict) -> None:
+        with open(self.database_path, "w") as database_file:
+            json.dump(data_to_dump, database_file, default=str)
+
+    def num_tables(self) -> int:
+        check_file = Path(self.database_path)
+        if check_file.is_file():
+            database_data = self.load_data()
+            return len(database_data.keys())
+        return 0
+
+    def create_object(self, file_name) -> DBTable:
+        list_fields = []
+        file_data = open(file_name)
+        data = json.load(file_data)
+        for field in list(data["meta_data"]["fields"].keys()):
+            list_fields.append(DBField(field, eval(data["meta_data"]["fields"][field])))
+        return DBTable(data["meta_data"]["name"], list_fields, data["meta_data"]["key"])
+
+    def get_table(self, table_name: str) -> DBTable:
+        database_data = self.load_data()
+        return self.create_object(database_data[table_name])
+
+    def delete_table(self, table_name: str) -> None:
+
+        database_data = self.load_data()
+        database_data.pop(table_name)
+        self.dump_data(database_data)
+
+    def get_tables_names(self) -> List[Any]:
+        database_data = self.load_data()
+        return list(database_data.keys())
+
+    def query_multiple_tables(self, tables: List[str], fields_and_values_list: List[List[SelectionCriteria]],
+                              fields_to_join_by: List[str]) -> List[Dict[str, Any]]:
+        list_of_meeting_the_creteria = []
+        for table_name, criteria in zip(tables, fields_and_values_list):
+            table = self.get_table(table_name)
+            if not table.check_must_fields(fields_to_join_by):
+                raise ValueError
+            list_of_meeting_the_creteria.append(table.query_table(criteria))
+
+        for list_ in list_of_meeting_the_creteria:
+            sorted(list_, key=lambda record: (record[field] for field in fields_to_join_by))
